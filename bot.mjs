@@ -98,8 +98,8 @@ async function initDB() {
 // --- Главное меню (ReplyKeyboard) ---
 const mainMenu = Markup.keyboard([
     ['📋 Чек-лист', '📈 Прогресс'],
-    ['💡 Мотивация', 'ℹ️ Помощь'],
-    ['♻️ Сбросить']
+    ['💡 Мотивация', '🔥 Серия'],
+    ['ℹ️ Помощь', '♻️ Сбросить']
 ]).resize();
 
 // --- Вспомогательные функции ---
@@ -156,6 +156,23 @@ function getProgressText(userId) {
     let percent = totalTasks ? Math.round(totalDone / totalTasks * 100) : 0;
     return `📊 Прогресс за неделю:\nДней полностью: ${daysDone}\nДней частично: ${daysPartial}\nВыполнено задач: ${totalDone} из ${totalTasks} (${percent}%)`;
 }
+function getStreak(userId) {
+    const user = db.data.users[userId] || {};
+    const dates = Object.keys(user)
+        .filter(date => date.match(/^\d{4}-\d{2}-\d{2}$/))
+        .sort((a, b) => dayjs(b).diff(dayjs(a)));
+    let streak = 0;
+    let prev = null;
+    for (const date of dates) {
+        const done = user[date]?.done?.filter(Boolean).length || 0;
+        const total = user[date]?.done?.length || 0;
+        if (total === 0 || done / total < 0.8) break;
+        if (prev && dayjs(prev).diff(dayjs(date), 'day') !== 1) break;
+        streak++;
+        prev = date;
+    }
+    return streak;
+}
 
 // --- Инициализация бота ---
 const bot = new Telegraf(BOT_TOKEN);
@@ -200,6 +217,8 @@ bot.hears('ℹ️ Помощь', async ctx => {
 <b>Мотивация:</b>
 💡 Даже один выполненный пункт — уже шаг к развитию!
 
+🔥 <b>Серия</b> — показывает, сколько дней подряд вы выполняете чек-лист на 80% и больше. Если пропустить или сделать меньше 80% — серия сбрасывается.
+
 Удачи!`,
         mainMenu
     );
@@ -211,6 +230,17 @@ bot.hears('♻️ Сбросить', async ctx => {
             [Markup.button.callback('✅ Да', 'reset_yes'), Markup.button.callback('❌ Нет', 'reset_no')]
         ])
     );
+});
+bot.hears('🔥 Серия', async ctx => {
+    await initDB();
+    const streak = getStreak(ctx.from.id);
+    if (streak > 1) {
+        await ctx.reply(`🔥 Ваша серия: ${streak} дней подряд с выполнением чек-листа на 80% и более!`, mainMenu);
+    } else if (streak === 1) {
+        await ctx.reply('🔥 Серия только началась! Продолжайте выполнять чек-лист на 80% и более каждый день.', mainMenu);
+    } else {
+        await ctx.reply('Серия ещё не началась. Выполняйте чек-лист два дня подряд на 80% и больше!', mainMenu);
+    }
 });
 
 // --- Инлайн кнопки подтверждения сброса ---
