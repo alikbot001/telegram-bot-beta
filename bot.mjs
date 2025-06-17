@@ -1,6 +1,6 @@
 import { Telegraf, Markup } from 'telegraf';
-import { Low } from 'lowdb';
-import { JSONFile } from 'lowdb/node';
+import { Low } from 'lowdb'
+import { JSONFile } from 'lowdb/node'
 import schedule from 'node-schedule';
 import dayjs from 'dayjs';
 
