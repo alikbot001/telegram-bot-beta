@@ -3,22 +3,19 @@ import { Low, JSONFile } from 'lowdb';
 import schedule from 'node-schedule';
 import dayjs from 'dayjs';
 
-const BOT_TOKEN = '7804238972:AAGexNGm0WbKRUNHM1jRWsqkxQzg3-6lMt4';
+// --- Ваш токен ---
+const BOT_TOKEN = 'ВАШ_ТОКЕН_ТУТ';
 
+// --- Мотивационные цитаты (пример) ---
 const MOTIVATION_QUOTES = [
     "Великие дела начинаются с малого.",
     "Секрет продвижения вперед — начать.",
     "Дорогу осилит идущий.",
     "Только тот, кто идет слишком далеко, узнает, как далеко можно зайти.",
     "Смелость — это начало действия, удача — его завершение.",
-    "Не ошибается тот, кто ничего не делает.",
-    "Падая, мы учимся подниматься.",
-    "Терпение и труд всё перетрут.",
-    "Сделай сегодня то, что другие не хотят — завтра будешь жить так, как другие не могут.",
-    "Путь в тысячу ли начинается с первого шага.",
-    // ...добавьте свои цитаты сюда (до 500 и более)...
 ];
 
+// --- Чеклисты по дням недели ---
 const WEEKLY_CHECKLIST = [
     {
         title: "ПОНЕДЕЛЬНИК — Психология влияния (~60 мин)",
@@ -91,9 +88,11 @@ const ALT_LINE = "💡 Или просто выбери 1 простую вещ�
 // --- Инициализация базы ---
 const adapter = new JSONFile('db.json');
 const db = new Low(adapter);
+db.data = db.data || { users: {} };
 
 async function initDB() {
     await db.read();
+    db.data = db.data || { users: {} };
     await db.write();
 }
 
@@ -101,24 +100,20 @@ async function initDB() {
 const mainMenu = Markup.keyboard([
     ['📋 Чек-лист', '📈 Прогресс'],
     ['💡 Мотивация', 'ℹ️ Помощь'],
-    ['🔥 Серия', '♻️ Сбросить']
+    ['♻️ Сбросить']
 ]).resize();
 
 // --- Вспомогательные функции ---
 function getTodayKey() {
     return dayjs().format('YYYY-MM-DD');
 }
-
 function getWeekKey() {
     return dayjs().format('YYYY-[W]WW');
 }
-
 function getWeekdayIndex() {
-    // 0 - воскресенье, 1 - понедельник, ... 6 - суббота
     let idx = dayjs().day();
     return idx === 0 ? 6 : idx - 1;
 }
-
 function getChecklistText(idx) {
     const day = WEEKLY_CHECKLIST[idx];
     let text = `✅ ${day.title}\n`;
@@ -126,7 +121,6 @@ function getChecklistText(idx) {
     text += ALT_LINE;
     return text;
 }
-
 function getChecklistButtons(userId, idx) {
     const todayKey = getTodayKey();
     const user = db.data.users[userId] ||= {};
@@ -141,7 +135,6 @@ function getChecklistButtons(userId, idx) {
         ])
     );
 }
-
 function getProgressText(userId) {
     const user = db.data.users[userId] || {};
     let week = {};
@@ -153,10 +146,7 @@ function getProgressText(userId) {
         }
     });
     const thisWeek = week[getWeekKey()] || [];
-    let daysDone = 0,
-        daysPartial = 0,
-        totalTasks = 0,
-        totalDone = 0;
+    let daysDone = 0, daysPartial = 0, totalTasks = 0, totalDone = 0;
     thisWeek.forEach(day => {
         const done = day.done.filter(Boolean).length;
         totalTasks += day.done.length;
@@ -168,51 +158,6 @@ function getProgressText(userId) {
     return `📊 Прогресс за неделю:\nДней полностью: ${daysDone}\nДней частично: ${daysPartial}\nВыполнено задач: ${totalDone} из ${totalTasks} (${percent}%)`;
 }
 
-// --- Серия дней ---
-function updateStreak(userId) {
-    const user = db.data.users[userId] ||= {};
-    let streak = user._streak || { count: 0, last: null };
-    const today = getTodayKey();
-    const yesterday = dayjs().subtract(1, 'day').format('YYYY-MM-DD');
-    const idxToday = getWeekdayIndex();
-    const idxYesterday = dayjs().subtract(1, 'day').day() === 0 ? 6 : dayjs().subtract(1, 'day').day() - 1;
-
-    // Проверяем выполнение за сегодня и вчера
-    const todayDone = user[today]?.done || [];
-    const yesterdayDone = user[yesterday]?.done || [];
-
-    const todayPercent = todayDone.length ? todayDone.filter(Boolean).length / todayDone.length : 0;
-    const yesterdayPercent = yesterdayDone.length ? yesterdayDone.filter(Boolean).length / yesterdayDone.length : 0;
-
-    if (todayPercent >= 0.8 && yesterdayPercent >= 0.8) {
-        // Продолжаем или начинаем серию
-        if (streak.last === yesterday) {
-            streak.count += 1;
-        } else {
-            streak.count = 2; // новая серия
-        }
-        streak.last = today;
-    } else if (todayPercent >= 0.8) {
-        // Только сегодня выполнено, но вчера нет — серия сброшена
-        streak.count = 1;
-        streak.last = today;
-    } else {
-        streak.count = 0;
-        streak.last = null;
-    }
-    user._streak = streak;
-    return streak;
-}
-
-function getStreakText(userId) {
-    const user = db.data.users[userId] ||= {};
-    const streak = user._streak || { count: 0 };
-    if (streak.count >= 2) {
-        return `🔥 Ваша серия: ${streak.count} дней подряд с выполнением >80% чек-листа!`;
-    }
-    return '';
-}
-
 // --- Инициализация бота ---
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -220,37 +165,6 @@ const bot = new Telegraf(BOT_TOKEN);
 bot.start(async ctx => {
     await initDB();
     await sendTodayChecklist(ctx, true);
-});
-
-bot.command('help', async ctx => {
-    await ctx.replyWithHTML(
-`ℹ️ <b>Помощь по боту</b>
-
-Этот бот — ваш персональный еженедельный чек-лист для саморазвития.
-
-<b>Доступные действия:</b>
-📋 Чек-лист — задачи на сегодня  
-📈 Прогресс — статистика за неделю  
-💡 Мотивация — случайная цитата  
-🔥 Серия — узнать длину вашей серии дней  
-♻️ Сбросить — сбросить прогресс  
-ℹ️ Помощь — это сообщение
-
-<b>Серия дней 🔥</b>
-Если вы выполняете чек-лист на 80% и больше два дня подряд — начинается серия. Каждый следующий день с выполнением 80% и больше увеличивает серию. Если день пропущен или выполнено меньше 80% — серия сбрасывается.
-
-<b>Как пользоваться:</b>
-• Каждый день в 8:00 вы получаете чек-лист.
-• Отмечайте задачи кнопками <b>✅</b> (выполнено) или <b>🔁</b> (пропустить).
-• Бот считает процент выполнения и ведёт статистику по неделям.
-• Каждый час — напоминания, а в воскресенье — мотивационный отчёт.
-
-<b>Мотивация:</b>
-💡 Даже один выполненный пункт — уже шаг к развитию!
-
-Удачи!`,
-        mainMenu
-    );
 });
 
 // --- Обработка ReplyKeyboard (главное меню) ---
@@ -262,7 +176,7 @@ bot.hears('📈 Прогресс', async ctx => {
     await ctx.reply(text, mainMenu);
 });
 bot.hears('💡 Мотивация', async ctx => {
-     const quote = getRandomQuote();
+    const quote = MOTIVATION_QUOTES[Math.floor(Math.random() * MOTIVATION_QUOTES.length)];
     await ctx.reply(`💡 Мотивация:\n${quote}`, mainMenu);
 });
 bot.hears('ℹ️ Помощь', async ctx => {
@@ -275,12 +189,8 @@ bot.hears('ℹ️ Помощь', async ctx => {
 📋 Чек-лист — задачи на сегодня  
 📈 Прогресс — статистика за неделю  
 💡 Мотивация — случайная цитата  
-🔥 Серия — узнать длину вашей серии дней  
 ♻️ Сбросить — сбросить прогресс  
 ℹ️ Помощь — это сообщение
-
-<b>Серия дней 🔥</b>
-Если вы выполняете чек-лист на 80% и больше два дня подряд — начинается серия. Каждый следующий день с выполнением 80% и больше увеличивает серию. Если день пропущен или выполнено меньше 80% — серия сбрасывается.
 
 <b>Как пользоваться:</b>
 • Каждый день в 8:00 вы получаете чек-лист.
@@ -294,14 +204,6 @@ bot.hears('ℹ️ Помощь', async ctx => {
 Удачи!`,
         mainMenu
     );
-});
-bot.hears('🔥 Серия', async ctx => {
-    const streakText = getStreakText(ctx.from.id);
-    if (streakText) {
-        await ctx.reply(streakText, mainMenu);
-    } else {
-        await ctx.reply('Серия ещё не началась. Выполняйте чек-лист два дня подряд на 80% и больше!', mainMenu);
-    }
 });
 bot.hears('♻️ Сбросить', async ctx => {
     await ctx.reply(
@@ -341,7 +243,6 @@ bot.on('callback_query', async ctx => {
         const num = parseInt(data.split('_')[1]);
         user[todayKey].done[num] = true;
         await db.write();
-        updateStreak(userId);
         await ctx.answerCbQuery('Отмечено!');
         try {
             await ctx.editMessageReplyMarkup(getChecklistButtons(userId, idx).reply_markup);
@@ -407,20 +308,6 @@ schedule.scheduleJob('0 9-23,0-1 * * *', async () => {
     }
 });
 
-// --- Утренняя мотивация и серия ---
-schedule.scheduleJob('0 9 * * *', async () => {
-    await initDB();
-    const users = Object.keys(db.data.users);
-    for (const userId of users) {
-        updateStreak(userId);
-        const streakText = getStreakText(userId);
-        const quote = getRandomQuote();
-        let msg = `Доброе утро!\n💡 Мотивация: ${quote}`;
-        if (streakText) msg += `\n\n${streakText}`;
-        await bot.telegram.sendMessage(userId, msg);
-    }
-});
-
 // --- Еженедельный отчёт ---
 schedule.scheduleJob('0 22 * * 0', async () => {
     await initDB();
@@ -437,14 +324,3 @@ console.log('Бот запущен!');
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
-
-let lastQuoteIndex = -1;
-
-function getRandomQuote() {
-    let idx;
-    do {
-        idx = Math.floor(Math.random() * MOTIVATION_QUOTES.length);
-    } while (idx === lastQuoteIndex && MOTIVATION_QUOTES.length > 1);
-    lastQuoteIndex = idx;
-    return MOTIVATION_QUOTES[idx];
-}
