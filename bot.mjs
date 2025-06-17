@@ -88,11 +88,10 @@ const ALT_LINE = "💡 Или просто выбери 1 простую вещ�
 // --- Инициализация базы ---
 const adapter = new JSONFile('db.json');
 const db = new Low(adapter);
-db.data = db.data || { users: {} };
 
 async function initDB() {
     await db.read();
-    db.data = db.data || { users: {} };
+    if (!db.data) db.data = { users: {} };
     await db.write();
 }
 
