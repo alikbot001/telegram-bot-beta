@@ -466,9 +466,80 @@ schedule.scheduleJob('0 22 * * 0', async () => {
     const users = Object.keys(db.data.users);
     for (const userId of users) {
         const text = getProgressText(userId);
-        const quote = getNextQuote(); // или getRandomQuote(), если используете очередь
-        await bot.telegram.sendMessage(userId, `💡 Мотивация дня:\n${quote}`);
+        const quote = getNextQuote();
+        let congrats = "Неделя завершена! 🎉";
+        const streak = getStreak(userId);
+        if (streak >= 7) congrats += ` Вы держите серию ${streak} дней подряд!`;
+        await bot.telegram.sendMessage(
+            userId,
+            `🌟 Итоги недели:\n${text}\n\n${congrats}\n\n💡 Мотивация: ${quote}`
+        );
     }
+});
+
+const WEEKLY_QUESTIONS = [
+    "Что было самым сложным на этой неделе?",
+    "Что далось легко?",
+    "Чему ты научился(ась)?"
+];
+
+schedule.scheduleJob('5 22 * * 0', async () => {
+    await initDB();
+    const users = Object.keys(db.data.users);
+    for (const userId of users) {
+        for (const q of WEEKLY_QUESTIONS) {
+            await bot.telegram.sendMessage(userId, `📝 ${q}`);
+        }
+    }
+});
+
+const CHALLENGES = [
+    "Попробуй новый маршрут домой.",
+    "Позвони другу.",
+    "Напиши 3 благодарности.",
+    "Сделай 10 приседаний.",
+    "Проведи 10 минут без телефона.",
+    "Сделай доброе дело незаметно.",
+    "Прогуляйся на свежем воздухе.",
+    "Сделай уборку на рабочем месте.",
+    "Почитай 10 страниц книги.",
+    "Сделай запись в дневнике.",
+    // Челленджи для английского
+    "Выучи и запиши 3 новых английских слова.",
+    "Посмотри короткое видео на английском (например, TED-ролик или мультик) и выпиши 2-3 новых слова.",
+    "Попробуй повторить вслух простую английскую фразу из YouTube или приложения.",
+    "Составь 2 простых предложения на английском и запиши их.",
+    "Слушай 5 минут английской песни и попробуй разобрать хотя бы одно слово.",
+    "Поставь на заставку телефона слово или фразу на английском — пусть весь день будет перед глазами."
+];
+
+function getRandomChallenge() {
+    return CHALLENGES[Math.floor(Math.random() * CHALLENGES.length)];
+}
+
+schedule.scheduleJob('2 8 * * *', async () => {
+    await initDB();
+    const users = Object.keys(db.data.users);
+    for (const userId of users) {
+        const challenge = getRandomChallenge();
+        await bot.telegram.sendMessage(
+            userId,
+            `🔥 Челлендж дня:\n${challenge}`,
+            Markup.inlineKeyboard([
+                Markup.button.callback('✅ Принять', `challenge_accept_${challenge}`),
+                Markup.button.callback('❌ Отказаться', `challenge_decline`)
+            ])
+        );
+    }
+});
+
+bot.action(/challenge_accept_(.+)/, async ctx => {
+    await ctx.editMessageText(`Челлендж принят! Удачи! 💪`);
+    await ctx.answerCbQuery();
+});
+bot.action('challenge_decline', async ctx => {
+    await ctx.editMessageText('Вы отказались от челленджа на сегодня.');
+    await ctx.answerCbQuery();
 });
 
 bot.launch();
