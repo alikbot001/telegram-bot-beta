@@ -208,6 +208,7 @@ const adapter = new JSONFile('db.json');
 const db = new Low(adapter);
 
 async function initDB() {
+    // Читаем базу только при запуске
     await db.read();
     if (!db.data) db.data = { users: {} };
     await db.write();
@@ -466,7 +467,7 @@ async function sendTodayChecklist(ctx, showMenu = true) {
 
 // --- Ежедневная рассылка чеклиста ---
 schedule.scheduleJob('0 8 * * *', async () => {
-    await initDB();
+    await db.read();
     const users = Object.keys(db.data.users);
     for (const userId of users) {
         const idx = getWeekdayIndex();
