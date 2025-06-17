@@ -1,6 +1,5 @@
 import { Telegraf, Markup } from 'telegraf';
-import { Low } from 'lowdb'
-import { JSONFile } from 'lowdb/node'
+import { Low, JSONFile } from 'lowdb';
 import schedule from 'node-schedule';
 import dayjs from 'dayjs';
 
@@ -90,7 +89,8 @@ const WEEKLY_CHECKLIST = [
 const ALT_LINE = "💡 Или просто выбери 1 простую вещь из списка — даже это уже шаг!";
 
 // --- Инициализация базы ---
-const db = new Low(new JSONFile('db.json'), { users: {} });
+const adapter = new JSONFile('db.json');
+const db = new Low(adapter);
 
 async function initDB() {
     await db.read();
