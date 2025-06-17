@@ -4,7 +4,7 @@ import schedule from 'node-schedule';
 import dayjs from 'dayjs';
 
 // --- Ваш токен ---
-const BOT_TOKEN = 'ВАШ_ТОКЕН_ТУТ';
+const BOT_TOKEN = '7804238972:AAEeZ-Dgjj1dBbjdUsoFn93R8O08B1ja3ig';
 
 // --- Мотивационные цитаты (пример) ---
 const MOTIVATION_QUOTES = [
