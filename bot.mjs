@@ -1,7 +1,22 @@
+import dotenv from 'dotenv';
+import { MongoClient } from 'mongodb';
 import { Telegraf, Markup } from 'telegraf';
-import { Low, JSONFile } from 'lowdb';
 import schedule from 'node-schedule';
 import dayjs from 'dayjs';
+
+dotenv.config();
+
+const uri = process.env.MONGODB_URI;
+const client = new MongoClient(uri);
+let db;
+
+async function connectDB() {
+    if (!db) {
+        await client.connect();
+        db = client.db('checklist'); // имя вашей базы
+    }
+    return db;
+}
 
 // --- Ваш токен ---
 const BOT_TOKEN = "7804238972:AAEbSUyQwWCnBvm9d3Ho6ACH1WVFLY4m_u0";
@@ -203,17 +218,6 @@ const WEEKLY_CHECKLIST = [
 
 const ALT_LINE = "💡 Или просто выбери 1 простую вещь из списка — даже это уже шаг!";
 
-// --- Инициализация базы ---
-const adapter = new JSONFile('db.json');
-const db = new Low(adapter);
-
-async function initDB() {
-     // Читаем базу только при запуске
-    await db.read();
-    if (!db.data) db.data = { users: {} };
-    await db.write();
-}
-
 // --- Главное меню (ReplyKeyboard) ---
 const mainMenu = Markup.keyboard([
     ['📋 Чек-лист', '📈 Прогресс'],
@@ -239,53 +243,54 @@ function getChecklistText(idx) {
     text += ALT_LINE;
     return text;
 }
-function getChecklistButtons(userId, idx) {
-    const todayKey = getTodayKey();
-    const user = db.data.users[userId] ||= {};
-    user[todayKey] ||= { done: Array(WEEKLY_CHECKLIST[idx].tasks.length).fill(false) };
+function getChecklistButtons(doneArray, idx) {
     return Markup.inlineKeyboard(
         WEEKLY_CHECKLIST[idx].tasks.map((t, i) => [
             Markup.button.callback(
-                (user[todayKey].done[i] ? '✅' : '⬜') + ' ' + (i + 1),
+                (doneArray[i] ? '✅' : '⬜') + ' ' + (i + 1),
                 `done_${i}`
             ),
             Markup.button.callback('🔁 Пропустить', `skip_${i}`)
         ])
     );
 }
-function getProgressText(userId) {
-    const user = db.data.users[userId] || {};
+function getChecklistStatus(doneArray, idx) {
+    const done = doneArray.filter(Boolean).length;
+    const total = WEEKLY_CHECKLIST[idx].tasks.length;
+    const percent = Math.round(done / total * 100);
+    return `Выполнено: ${done} из ${total} (${percent}%)`;
+}
+function getProgressText(user) {
     let week = {};
-    Object.keys(user).forEach(date => {
+    Object.keys(user.progress || {}).forEach(date => {
         if (date.match(/^\d{4}-\d{2}-\d{2}$/)) {
             const w = dayjs(date).format('YYYY-[W]WW');
             week[w] ||= [];
-            week[w].push(user[date]);
+            week[w].push(user.progress[date]);
         }
     });
     const thisWeek = week[getWeekKey()] || [];
     let daysDone = 0, daysPartial = 0, totalTasks = 0, totalDone = 0;
     thisWeek.forEach(day => {
-        const done = day.done.filter(Boolean).length;
-        totalTasks += day.done.length;
+        const done = day.filter(Boolean).length;
+        totalTasks += day.length;
         totalDone += done;
-        if (done === day.done.length) daysDone++;
+        if (done === day.length) daysDone++;
         else if (done > 0) daysPartial++;
     });
     let percent = totalTasks ? Math.round(totalDone / totalTasks * 100) : 0;
     return `📊 Прогресс за неделю:\nДней полностью: ${daysDone}\nДней частично: ${daysPartial}\nВыполнено задач: ${totalDone} из ${totalTasks} (${percent}%)`;
 }
-function getStreak(userId) {
-    const user = db.data.users[userId] || {};
-    const dates = Object.keys(user)
-        .filter(date => date.match(/^\d{4}-\d{2}-\d{2}$/))
-        .sort((a, b) => dayjs(b).diff(dayjs(a)));
+async function calculateStreak(userId) {
+    const user = await getUser(userId);
+    const dates = Object.keys(user.progress || {}).sort((a, b) => dayjs(b).diff(dayjs(a)));
     let streak = 0;
     let prev = null;
     for (const date of dates) {
-        const done = user[date]?.done?.filter(Boolean).length || 0;
-        const total = user[date]?.done?.length || 0;
-        if (total === 0 || done / total < 0.8) break;
+        const done = user.progress[date];
+        const total = done.length;
+        const completed = done.filter(Boolean).length;
+        if (total === 0 || completed / total < 0.8) break;
         if (prev && dayjs(prev).diff(dayjs(date), 'day') !== 1) break;
         streak++;
         prev = date;
@@ -316,21 +321,44 @@ function getRandomWord() {
     return ENGLISH_WORDS[Math.floor(Math.random() * ENGLISH_WORDS.length)];
 }
 
+// --- Работа с пользователем в MongoDB ---
+async function getUser(userId) {
+    const db = await connectDB();
+    let user = await db.collection('users').findOne({ userId });
+    if (!user) {
+        user = { userId, progress: {}, streak: 0 };
+        await db.collection('users').insertOne(user);
+    }
+    return user;
+}
+async function updateUser(userId, update) {
+    const db = await connectDB();
+    await db.collection('users').updateOne(
+        { userId },
+        { $set: update },
+        { upsert: true }
+    );
+}
+async function saveProgress(userId, date, doneArray, streak) {
+    await updateUser(userId, {
+        [`progress.${date}`]: doneArray,
+        streak: streak
+    });
+}
+
 // --- Инициализация бота ---
 const bot = new Telegraf(BOT_TOKEN);
 
 // --- Команды ---
 bot.start(async ctx => {
-    await initDB();
     await sendTodayChecklist(ctx, true);
 });
-
-// --- Обработка ReplyKeyboard (главное меню) ---
 bot.hears('📋 Чек-лист', async ctx => {
     await sendTodayChecklist(ctx, false);
 });
 bot.hears('📈 Прогресс', async ctx => {
-    const text = getProgressText(ctx.from.id);
+    const user = await getUser(ctx.from.id);
+    const text = getProgressText(user);
     await ctx.reply(text, mainMenu);
 });
 bot.hears('💡 Мотивация', async ctx => {
@@ -388,8 +416,8 @@ bot.hears('♻️ Сбросить', async ctx => {
     );
 });
 bot.hears('🔥 Серия', async ctx => {
-    await initDB();
-    const streak = getStreak(ctx.from.id);
+    const user = await getUser(ctx.from.id);
+    const streak = user.streak || 0;
     if (streak > 1) {
         await ctx.reply(`🔥 Ваша серия: ${streak} дней подряд с выполнением чек-листа на 80% и более!`, mainMenu);
     } else if (streak === 1) {
@@ -401,8 +429,11 @@ bot.hears('🔥 Серия', async ctx => {
 
 // --- Инлайн кнопки подтверждения сброса ---
 bot.action('reset_yes', async ctx => {
-    db.data.users[ctx.from.id] = {};
-    await db.write();
+    const db = await connectDB();
+    await db.collection('users').updateOne(
+        { userId: ctx.from.id },
+        { $set: { progress: {}, streak: 0 } }
+    );
     await ctx.editMessageText('Прогресс удалён! 👍');
     await ctx.reply('Выберите действие:', mainMenu);
     await ctx.answerCbQuery();
@@ -415,96 +446,95 @@ bot.action('reset_no', async ctx => {
 
 // --- Инлайн кнопки чек-листа ---
 bot.on('callback_query', async ctx => {
-    if (!ctx.callbackQuery.data.startsWith('done_') && !ctx.callbackQuery.data.startsWith('skip_')) return;
-    await initDB();
     const userId = ctx.from.id;
     const todayKey = getTodayKey();
     const idx = getWeekdayIndex();
-    const user = db.data.users[userId] ||= {};
-    user[todayKey] ||= { done: Array(WEEKLY_CHECKLIST[idx].tasks.length).fill(false) };
+    const user = await getUser(userId);
+
+    let doneArray = user.progress?.[todayKey] || Array(WEEKLY_CHECKLIST[idx].tasks.length).fill(false);
 
     const data = ctx.callbackQuery.data;
     if (data.startsWith('done_')) {
         const num = parseInt(data.split('_')[1]);
-        user[todayKey].done[num] = true;
-        await db.write();
+        doneArray[num] = true;
+
+        // Пересчитываем серию
+        let streak = await calculateStreak(userId);
+
+        await saveProgress(userId, todayKey, doneArray, streak);
+
         await ctx.answerCbQuery('Отмечено!');
         try {
-            await ctx.editMessageReplyMarkup(getChecklistButtons(userId, idx).reply_markup);
+            await ctx.editMessageReplyMarkup(getChecklistButtons(doneArray, idx).reply_markup);
         } catch (e) {
             if (!e.message.includes('message is not modified')) throw e;
         }
-        await ctx.reply(getChecklistStatus(userId, idx));
+        await ctx.reply(getChecklistStatus(doneArray, idx));
     } else if (data.startsWith('skip_')) {
         await ctx.answerCbQuery('Пропущено!');
         try {
-            await ctx.editMessageReplyMarkup(getChecklistButtons(userId, idx).reply_markup);
+            await ctx.editMessageReplyMarkup(getChecklistButtons(doneArray, idx).reply_markup);
         } catch (e) {
             if (!e.message.includes('message is not modified')) throw e;
         }
     }
 });
 
-// --- Статус чеклиста ---
-function getChecklistStatus(userId, idx) {
-    const todayKey = getTodayKey();
-    const user = db.data.users[userId] ||= {};
-    user[todayKey] ||= { done: Array(WEEKLY_CHECKLIST[idx].tasks.length).fill(false) };
-    const done = user[todayKey].done.filter(Boolean).length;
-    const total = WEEKLY_CHECKLIST[idx].tasks.length;
-    const percent = Math.round(done / total * 100);
-    return `Выполнено: ${done} из ${total} (${percent}%)`;
-}
-
 // --- Отправка чеклиста ---
 async function sendTodayChecklist(ctx, showMenu = true) {
     const idx = getWeekdayIndex();
+    const user = await getUser(ctx.from.id);
+    const todayKey = getTodayKey();
+    let doneArray = user.progress?.[todayKey] || Array(WEEKLY_CHECKLIST[idx].tasks.length).fill(false);
+
     const text = getChecklistText(idx);
-    await ctx.reply(text, getChecklistButtons(ctx.from.id, idx));
-    await ctx.reply(getChecklistStatus(ctx.from.id, idx));
+    await ctx.reply(text, getChecklistButtons(doneArray, idx));
+    await ctx.reply(getChecklistStatus(doneArray, idx));
     if (showMenu) await ctx.reply('Выберите действие:', mainMenu);
 }
 
 // --- Ежедневная рассылка чеклиста ---
 schedule.scheduleJob('0 8 * * *', async () => {
-    await db.read();
-    const users = Object.keys(db.data.users);
-    for (const userId of users) {
+    const db = await connectDB();
+    const users = await db.collection('users').find({}).toArray();
+    for (const user of users) {
         const idx = getWeekdayIndex();
+        const todayKey = getTodayKey();
+        let doneArray = user.progress?.[todayKey] || Array(WEEKLY_CHECKLIST[idx].tasks.length).fill(false);
         const text = getChecklistText(idx);
-        await bot.telegram.sendMessage(userId, text, getChecklistButtons(userId, idx));
-        await bot.telegram.sendMessage(userId, getChecklistStatus(userId, idx));
-        await bot.telegram.sendMessage(userId, 'Выберите действие:', mainMenu);
+        await bot.telegram.sendMessage(user.userId, text, getChecklistButtons(doneArray, idx));
+        await bot.telegram.sendMessage(user.userId, getChecklistStatus(doneArray, idx));
+        await bot.telegram.sendMessage(user.userId, 'Выберите действие:', mainMenu);
     }
 });
 
 // --- Почасовые напоминания ---
 schedule.scheduleJob('0 9-23,0-1 * * *', async () => {
-    await initDB();
-    const users = Object.keys(db.data.users);
+    const db = await connectDB();
+    const users = await db.collection('users').find({}).toArray();
     const reminders = [
         "🕐 Уже час прошёл! Сделай хотя бы 1 шаг из чек-листа!",
         "🔔 Маленький шаг — тоже движение. Выполни хотя бы одно задание.",
         "⏳ Не забывай про свой чеклист — даже 1 пункт важен!",
         "💪 Ты можешь больше, чем думаешь. Сделай шаг сейчас!"
     ];
-    for (const userId of users) {
-        await bot.telegram.sendMessage(userId, reminders[Math.floor(Math.random() * reminders.length)]);
+    for (const user of users) {
+        await bot.telegram.sendMessage(user.userId, reminders[Math.floor(Math.random() * reminders.length)]);
     }
 });
 
 // --- Еженедельный отчёт ---
 schedule.scheduleJob('0 22 * * 0', async () => {
-    await initDB();
-    const users = Object.keys(db.data.users);
-    for (const userId of users) {
-        const text = getProgressText(userId);
+    const db = await connectDB();
+    const users = await db.collection('users').find({}).toArray();
+    for (const user of users) {
+        const text = getProgressText(user);
         const quote = getNextQuote();
         let congrats = "Неделя завершена! 🎉";
-        const streak = getStreak(userId);
+        const streak = user.streak || 0;
         if (streak >= 7) congrats += ` Вы держите серию ${streak} дней подряд!`;
         await bot.telegram.sendMessage(
-            userId,
+            user.userId,
             `🌟 Итоги недели:\n${text}\n\n${congrats}\n\n💡 Мотивация: ${quote}`
         );
     }
@@ -517,11 +547,11 @@ const WEEKLY_QUESTIONS = [
 ];
 
 schedule.scheduleJob('5 22 * * 0', async () => {
-    await initDB();
-    const users = Object.keys(db.data.users);
-    for (const userId of users) {
+    const db = await connectDB();
+    const users = await db.collection('users').find({}).toArray();
+    for (const user of users) {
         for (const q of WEEKLY_QUESTIONS) {
-            await bot.telegram.sendMessage(userId, `📝 ${q}`);
+            await bot.telegram.sendMessage(user.userId, `📝 ${q}`);
         }
     }
 });
@@ -551,12 +581,12 @@ function getRandomChallenge() {
 }
 
 schedule.scheduleJob('2 8 * * *', async () => {
-    await initDB();
-    const users = Object.keys(db.data.users);
-    for (const userId of users) {
+    const db = await connectDB();
+    const users = await db.collection('users').find({}).toArray();
+    for (const user of users) {
         const challenge = getRandomChallenge();
         await bot.telegram.sendMessage(
-            userId,
+            user.userId,
             `🔥 Челлендж дня:\n${challenge}`,
             Markup.inlineKeyboard([
                 Markup.button.callback('✅ Принять', `challenge_accept_${challenge}`),
