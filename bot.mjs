@@ -4,7 +4,7 @@ import schedule from 'node-schedule';
 import dayjs from 'dayjs';
 
 // --- Ваш токен ---
-const BOT_TOKEN = '7804238972:AAEeZ-Dgjj1dBbjdUsoFn93R8O08B1ja3ig';
+const BOT_TOKEN = "7804238972:AAEbSUyQwWCnBvm9d3Ho6ACH1WVFLY4m_u0";
 
 // --- Мотивационные цитаты (пример) ---
 const MOTIVATION_QUOTES = [
@@ -208,7 +208,7 @@ const adapter = new JSONFile('db.json');
 const db = new Low(adapter);
 
 async function initDB() {
-    // Читаем базу только при запуске
+     // Читаем базу только при запуске
     await db.read();
     if (!db.data) db.data = { users: {} };
     await db.write();
