@@ -1,12 +1,12 @@
-import { Low } from 'lowdb'
-import { JSONFile } from 'lowdb/node'
 import { Telegraf, Markup } from 'telegraf';
 import schedule from 'node-schedule';
 import dayjs from 'dayjs';
+import { Low } from 'lowdb';
+import { JSONFile } from 'lowdb/node';
 
 // --- Настройка lowdb ---
 const adapter = new JSONFile('db.json');
-const db = new Low(adapter);
+const db = new Low(adapter, { users: {} });
 
 async function initDB() {
     await db.read();
@@ -17,7 +17,7 @@ async function initDB() {
 // --- Ваш токен ---
 const BOT_TOKEN = "7804238972:AAFfnqmnuRKYFM3CzvJ-Es9j1ucQWCej3Uw";
 
-// --- Мотивационные цитаты (пример) ---
+// --- Мотивационные цитаты ---
 const MOTIVATION_QUOTES = [
     "Делай сегодня то, что другие не хотят — завтра будешь жить так, как другие не могут. — Джерри Райс",
     "Просыпайся с мыслью, что нужно изменить чью-то жизнь. Хотя бы свою. — Рой Беннет",
@@ -1046,7 +1046,7 @@ bot.command('addword', async ctx => {
     if (!word || !translate) {
         return ctx.reply('Используйте: /addword слово - перевод');
     }
-    db.data.users[userId] ||= { progress: {}, streak: 0, words: [], medals: [] };
+    db.data.users[userId] ||= { words: [] };
     db.data.users[userId].words ||= [];
     db.data.users[userId].words.push({ word, translate, example: '' });
     await db.write();
@@ -1083,7 +1083,8 @@ bot.action('reset_no', async ctx => {
 // --- Инлайн кнопки чек-листа ---
 bot.on('callback_query', async ctx => {
     await initDB();
-    const userId = ctx.from.id;
+    const userId = ctx.from.id; // <-- добавьте эту строку
+
     const todayKey = getTodayKey();
     const idx = getWeekdayIndex();
     const user = db.data.users[userId] ||= { progress: {}, streak: 0, words: [], medals: [], habitsSent: [] };
@@ -1295,5 +1296,5 @@ async function sendHabitOfTheDay(ctx) {
     const random = available[Math.floor(Math.random() * available.length)];
     user.habitsSent.push(random.idx);
     await db.write();
-    await ctx.reply(`💡 Привычка дня:\n${random.habit}`);
+    ctx.reply(`💡 Привычка дня:\n${random.habit}`);
 }
